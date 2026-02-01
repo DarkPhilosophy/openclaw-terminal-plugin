@@ -1,0 +1,14 @@
+{
+  "name": "@darkphilosophy/openclaw-terminal-plugin",
+  "version": "1.0.0",
+  "description": "Native system console for OpenClaw Gateway Dashboard",
+  "main": "src/index.ts",
+  "author": "DarkPhilosophy",
+  "license": "MIT",
+  "openclaw": {
+    "extensions": ["./src/index.ts"]
+  },
+  "dependencies": {
+    "child_process": "^1.0.2"
+  }
+}

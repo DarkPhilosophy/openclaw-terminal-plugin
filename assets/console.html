@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>OpenClaw Web Console</title>
+    <style>
+        body { background: #000; color: #00ff00; font-family: 'Courier New', Courier, monospace; padding: 20px; font-size: 14px; line-height: 1.4; margin: 0; overflow: hidden; }
+        #output { height: calc(100vh - 80px); overflow-y: auto; white-space: pre-wrap; margin-bottom: 10px; border-bottom: 1px solid #222; padding-bottom: 10px; }
+        #input-row { display: flex; align-items: center; padding-bottom: 10px; }
+        #prompt { color: #5555ff; font-weight: bold; margin-right: 8px; white-space: nowrap; }
+        #cmd { background: transparent; border: none; color: #00ff00; font-family: inherit; font-size: inherit; outline: none; flex: 1; }
+        .error { color: #ff5555; }
+        .system { color: #888; font-style: italic; }
+        .info { color: #55ffff; }
+        .cmd-echo { color: #ffff55; font-weight: bold; }
+        h3 { margin-top: 0; color: #00aa00; border-bottom: 1px solid #00aa00; padding-bottom: 5px; display: flex; justify-content: space-between; font-size: 12px; }
+        #status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: #ff5555; margin-left: 10px; }
+        .connected #status-dot { background: #00ff00; box-shadow: 0 0 5px #00ff00; }
+        
+        #output::-webkit-scrollbar { width: 8px; }
+        #output::-webkit-scrollbar-track { background: #000; }
+        #output::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <h3>
+        <span>CALYP DIRECT SYSTEM ACCESS (INTEGRATED)</span>
+        <span id="status-dot"></span>
+    </h3>
+    <div id="output">Establishing secure uplink to OpenClaw Gateway...</div>
+    <div id="input-row">
+        <span id="prompt">user@host:~$</span>
+        <input type="text" id="cmd" autofocus spellcheck="false" autocomplete="off">
+    </div>
+
+    <script>
+        const output = document.getElementById('output');
+        const cmd = document.getElementById('cmd');
+        const statusDot = document.getElementById('status-dot');
+        let ws;
+        let requestId = 1;
+
+        function append(text, className = '') {
+            const div = document.createElement('div');
+            if (className) div.className = className;
+            div.textContent = text;
+            output.appendChild(div);
+            output.scrollTop = output.scrollHeight;
+        }
+
+        function getSettings() {
+            const settingsRaw = localStorage.getItem('openclaw.control.settings.v1');
+            if (settingsRaw) {
+                try {
+                    return JSON.parse(settingsRaw);
+                } catch (e) { 
+                    console.error("Settings parse error:", e);
+                }
+            }
+            return null;
+        }
+
+        function connect() {
+            const settings = getSettings();
+            let gatewayUrl = settings?.gatewayUrl;
+            const token = settings?.token;
+
+            if (!gatewayUrl) {
+                const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                gatewayUrl = proto + '//' + location.host + '/';
+            }
+            
+            if (!gatewayUrl.endsWith('/')) gatewayUrl += '/';
+            if (!gatewayUrl.startsWith('ws')) {
+                const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                gatewayUrl = proto + '//' + gatewayUrl;
+            }
+
+            append("Connecting to: " + gatewayUrl, "system");
+            document.body.classList.remove('connected');
+            
+            try {
+                ws = new WebSocket(gatewayUrl);
+            } catch (e) {
+                append("WebSocket Creation Failed: " + e.message, "error");
+                return;
+            }
+
+            ws.onopen = () => {
+                append("Uplink established. Authenticating...", "system");
+                sendConnect(token || 'none');
+            };
+
+            function sendConnect(authToken) {
+                ws.send(JSON.stringify({
+                    type: "req",
+                    id: "auth-" + Date.now(),
+                    method: "connect",
+                    params: { 
+                        minProtocol: 1,
+                        maxProtocol: 3,
+                        auth: { token: authToken },
+                        role: "operator",
+                        scopes: ["operator.admin"],
+                        client: {
+                            id: "gateway-client",
+                            displayName: "Web Console",
+                            version: "1.0.0",
+                            platform: "web",
+                            mode: "backend"
+                        }
+                    }
+                }));
+            }
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                if (data.id && data.id.startsWith("auth-")) {
+                    if (data.ok) {
+                        append("Authentication successful. System core accessed.", "info");
+                        document.body.classList.add('connected');
+                    } else {
+                        append("Authentication rejected: " + (data.error?.message || "Invalid Credentials"), "error");
+                    }
+                    return;
+                }
+
+                if (data.type === "res") {
+                    if (data.ok) {
+                        const res = data.payload || {};
+                        if (res.stdout) append(res.stdout);
+                        if (res.stderr) append(res.stderr, "error");
+                        if (!res.stdout && !res.stderr) append("(Success, no output)");
+                    } else {
+                        append("Execution Error: " + (data.error?.message || JSON.stringify(data.error)), "error");
+                    }
+                }
+            };
+
+            ws.onclose = (e) => {
+                append("Connection closed (Code: " + e.code + "). Reconnecting in 5s...", "error");
+                document.body.classList.remove('connected');
+                setTimeout(connect, 5000);
+            };
+        }
+
+        cmd.onkeydown = (e) => {
+            if (e.key === 'Enter') {
+                const command = cmd.value.trim();
+                if (!command) return;
+                
+                append("user@host:~$ " + command, "cmd-echo");
+                
+                if (command === 'clear') {
+                    output.innerHTML = '';
+                    cmd.value = '';
+                    return;
+                }
+
+                if (!document.body.classList.contains('connected')) {
+                    append("Error: System offline.", "error");
+                    return;
+                }
+
+                ws.send(JSON.stringify({
+                    type: "req",
+                    id: "cmd-" + requestId++,
+                    method: "terminal.exec",
+                    params: { command: command }
+                }));
+                cmd.value = '';
+            }
+        };
+
+        connect();
+    </script>
+</body>
+</html>

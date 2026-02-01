@@ -1,0 +1,19 @@
+{
+  "id": "terminal",
+  "name": "Web Console",
+  "description": "Native shell console integrated directly into the OpenClaw dashboard.",
+  "version": "1.0.0",
+  "kind": "utility",
+  "author": "CALYP & DarkPhilosophy",
+  "license": "MIT",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true
+      }
+    }
+  }
+}
