@@ -24,8 +24,34 @@ if [ ! -f "$UI_PATH/index.html.bak" ]; then
     cp "$UI_PATH/index.html" "$UI_PATH/index.html.bak"
 fi
 
-# Injection script
+# Injection script using a Fixed Overlay approach for seamless integration
 INJECTION_SCRIPT=$(cat <<EOF
+<style>
+  #integrated-console-overlay {
+    position: fixed;
+    top: 0;
+    left: 260px;
+    right: 0;
+    bottom: 0;
+    background: #000;
+    z-index: 1000;
+    display: none;
+    flex-direction: column;
+  }
+  #integrated-console-overlay.active {
+    display: flex;
+  }
+  .console-iframe {
+    flex: 1;
+    border: none;
+    background: #000;
+  }
+  @media (max-width: 768px) {
+    #integrated-console-overlay {
+      left: 0;
+    }
+  }
+</style>
 <script>
   (function() {
       function findInShadows(root, selector) {
@@ -58,37 +84,30 @@ INJECTION_SCRIPT=$(cat <<EOF
           return null;
       }
 
-      function showConsole(active) {
-          let container = document.getElementById('integrated-console-container');
-          if (!container && active) {
-              container = document.createElement('div');
-              container.id = 'integrated-console-container';
-              container.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;background:#000;z-index:9999;display:flex;flex-direction:column;";
-              container.innerHTML = '<iframe src="/console.html" style="flex:1;border:none;background:#000;"></iframe>';
-              
-              const app = document.querySelector('openclaw-app');
-              const main = findInShadows(app?.shadowRoot || document.body, 'main') || 
-                           findInShadows(app?.shadowRoot || document.body, '.content-area');
-              
-              if (main) {
-                  main.style.position = 'relative';
-                  main.appendChild(container);
-              } else {
-                  document.body.appendChild(container);
-              }
+      function updateConsoleState() {
+          const isActive = location.pathname === '/console';
+          let overlay = document.getElementById('integrated-console-overlay');
+          
+          if (isActive && !overlay) {
+              overlay = document.createElement('div');
+              overlay.id = 'integrated-console-overlay';
+              overlay.innerHTML = '<iframe src="/console.html" class="console-iframe"></iframe>';
+              document.body.appendChild(overlay);
           }
           
-          if (container) {
-              container.style.display = active ? 'flex' : 'none';
-          }
-
-          if (active && location.pathname !== '/console') {
-              history.pushState(null, '', '/console');
+          if (overlay) {
+              overlay.classList.toggle('active', isActive);
+              const app = document.querySelector('openclaw-app');
+              const sidebar = findInShadows(app?.shadowRoot, 'aside') || findInShadows(app?.shadowRoot, '.sidebar');
+              if (sidebar) {
+                  overlay.style.left = sidebar.offsetWidth + 'px';
+              }
           }
       }
 
       function injectMenu() {
           if (document.querySelector('#console-link')) return;
+
           const chatLink = findChatLink(document.body);
           if (!chatLink) return;
 
@@ -100,33 +119,48 @@ INJECTION_SCRIPT=$(cat <<EOF
           consoleLink.style.cssText = chatLink.style.cssText;
           consoleLink.style.color = '#00ff00';
           consoleLink.style.borderLeft = '4px solid #00ff00';
+          consoleLink.style.fontWeight = 'bold';
           consoleLink.innerHTML = '<span style="margin-right: 8px;">📟</span> CONSOLE';
 
           consoleLink.onclick = (e) => {
               e.preventDefault();
-              showConsole(true);
-              menuContainer.querySelectorAll('a').forEach(a => a.classList.remove('active'));
+              history.pushState(null, '', '/console');
+              updateConsoleState();
+              menuContainer.querySelectorAll('a').forEach(a => {
+                  a.classList.remove('active');
+                  a.style.backgroundColor = '';
+              });
               consoleLink.classList.add('active');
+              consoleLink.style.backgroundColor = 'rgba(0, 255, 0, 0.1)';
           };
 
           menuContainer.insertBefore(consoleLink, chatLink);
 
           menuContainer.querySelectorAll('a').forEach(a => {
               if (a.id !== 'console-link') {
-                  const originalClick = a.onclick;
-                  a.onclick = (e) => {
-                      showConsole(false);
-                      if (originalClick) originalClick.apply(a, [e]);
-                  };
+                  a.addEventListener('click', () => {
+                      setTimeout(updateConsoleState, 10);
+                  });
               }
           });
       }
 
-      window.addEventListener('popstate', () => {
-          showConsole(location.pathname === '/console');
-      });
+      window.addEventListener('popstate', updateConsoleState);
+      
+      const appCheck = setInterval(() => {
+          const app = document.querySelector('openclaw-app');
+          if (app && app.shadowRoot) {
+              updateConsoleState();
+              clearInterval(appCheck);
+          }
+      }, 500);
 
-      setInterval(injectMenu, 1000);
+      setInterval(() => {
+          injectMenu();
+          if (location.pathname !== '/console' && document.getElementById('integrated-console-overlay')?.classList.contains('active')) {
+              updateConsoleState();
+          }
+      }, 1000);
   })();
 </script>
 EOF
